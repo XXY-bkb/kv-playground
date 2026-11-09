@@ -59,12 +59,12 @@
       "summary": {
         "finished": 4,
         "generated_steps": 128,
-        "peak_kv_util": 0.5,
+        "peak_kv_util": 0.375,
         "preemptions": 0,
-        "prefix_hit_tokens": 256,
+        "prefix_hit_tokens": 384,
         "total_output_tokens": 128,
         "total_requests": 4,
-        "total_steps": 36
+        "total_steps": 37
       },
       "title": "共享 system prompt：前缀缓存命中"
     },
@@ -81,7 +81,7 @@
         "prefix_hit_tokens": 0,
         "total_output_tokens": 128,
         "total_requests": 4,
-        "total_steps": 36
+        "total_steps": 37
       },
       "title": "对照：关掉前缀缓存"
     },

@@ -107,10 +107,12 @@ SCENARIO_DEFS: list[dict[str, Any]] = [
             prefix_cache=True,
         ),
         "requests": [
+            # 第一条请求要先完成 prefill，前缀块才会进入缓存；
+            # 所以后面的请求错开 2 步到达，避免“同一调度步抢跑”造成假的不命中。
             RequestSpec("r1", 160, 32, 0, shared_prefix_len=128),
-            RequestSpec("r2", 160, 32, 1, shared_prefix_len=128),
-            RequestSpec("r3", 160, 32, 2, shared_prefix_len=128),
-            RequestSpec("r4", 160, 32, 3, shared_prefix_len=128),
+            RequestSpec("r2", 160, 32, 2, shared_prefix_len=128),
+            RequestSpec("r3", 160, 32, 3, shared_prefix_len=128),
+            RequestSpec("r4", 160, 32, 4, shared_prefix_len=128),
         ],
     },
     {
@@ -129,10 +131,12 @@ SCENARIO_DEFS: list[dict[str, Any]] = [
             prefix_cache=False,
         ),
         "requests": [
+            # 第一条请求要先完成 prefill，前缀块才会进入缓存；
+            # 所以后面的请求错开 2 步到达，避免“同一调度步抢跑”造成假的不命中。
             RequestSpec("r1", 160, 32, 0, shared_prefix_len=128),
-            RequestSpec("r2", 160, 32, 1, shared_prefix_len=128),
-            RequestSpec("r3", 160, 32, 2, shared_prefix_len=128),
-            RequestSpec("r4", 160, 32, 3, shared_prefix_len=128),
+            RequestSpec("r2", 160, 32, 2, shared_prefix_len=128),
+            RequestSpec("r3", 160, 32, 3, shared_prefix_len=128),
+            RequestSpec("r4", 160, 32, 4, shared_prefix_len=128),
         ],
     },
     {
