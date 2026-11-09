@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kv-playground · LLM 推理调度可视化</title>
+    <meta
+      name="description"
+      content="用离散事件模拟器把 paged KV cache、连续批处理、前缀缓存和抢占重算画出来。零第三方依赖，纯前端回放。"
+    />
+    <meta name="theme-color" content="#080d1a" />
+    <!-- 内联 SVG favicon：避免额外请求，也避免本地/Pages 下 favicon.ico 404。 -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b8a6'/%3E%3Ctext x='32' y='43' font-family='monospace' font-size='27' font-weight='700' text-anchor='middle' fill='%23081018'%3EKV%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- 顶栏：项目名 + 两个状态提示。数字都来自仓库内的模拟器，不冒充实测。 -->
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">KV</div>
+          <div>
+            <h1>kv-playground</h1>
+            <p class="subtitle">
+              把 paged KV cache、连续批处理、前缀缓存和抢占重算画出来
+            </p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span class="pill"><span class="dot"></span>模拟器 · 不跑真实模型</span>
+          <a
+            class="gh-link"
+            href="https://github.com/XXY-bkb/kv-playground"
+            target="_blank"
+            rel="noreferrer"
+            >GitHub ↗</a
+          >
+        </div>
+      </header>
+
+      <!-- 场景切换：按 group 分组，由 main.js 根据 data/scenarios/index.json 生成。 -->
+      <nav class="scenario-tabs" id="scenarioTabs" aria-label="场景"></nav>
+
+      <!-- 当前场景的标题、说明和汇总数字。 -->
+      <section class="scenario-intro">
+        <h2 id="scenarioTitle">加载中…</h2>
+        <p id="scenarioDesc"></p>
+        <div class="chips" id="summaryChips"></div>
+      </section>
+
+      <!-- 播放控制。进度条宽度 = 当前 step / 总步数。 -->
+      <section class="controls" aria-label="播放控制">
+        <button class="btn primary" id="playBtn" type="button">▶ 播放</button>
+        <button class="btn" id="prevBtn" type="button">上一步</button>
+        <button class="btn" id="nextBtn" type="button">下一步</button>
+        <button class="btn" id="resetBtn" type="button">重置</button>
+        <label class="speed">
+          速度
+          <input id="speed" type="range" min="0.5" max="3" step="0.5" value="1" />
+          <span id="speedLabel">1×</span>
+        </label>
+        <div class="step-readout">
+          step <strong id="stepNow">0</strong> /
+          <span id="stepTotal">0</span>
+        </div>
+        <div class="progress"><div id="progressBar"></div></div>
+      </section>
+
+      <!-- 三栏：请求列表 / 块池 / 队列+指标。 -->
+      <main class="layout">
+        <section class="panel">
+          <div class="panel-head">
+            <h3>请求</h3>
+            <span class="muted" id="reqMeta"></span>
+          </div>
+          <div class="req-list" id="reqList"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>KV 块池</h3>
+            <span class="muted">一个格子 = 一个物理 block</span>
+          </div>
+          <div class="block-grid" id="blockGrid"></div>
+          <div class="memory-meta" id="memoryMeta"></div>
+          <div class="block-detail" id="blockDetail">
+            把鼠标移到块上，查看它被谁引用、是否已进前缀缓存。
+          </div>
+          <div class="legend">
+            <span><i style="background: #0a1120; border: 1px dashed #3f4f6a"></i>空闲</span>
+            <span><i style="background: #34d399"></i>使用中</span>
+            <span><i style="background: #94a3b8"></i>仅缓存</span>
+            <span><i style="background: linear-gradient(135deg, #34d399 0 50%, #60a5fa 50% 100%)"></i>共享</span>
+            <span>虚线内框 = 已进前缀缓存</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="queue">
+            <h4>waiting</h4>
+            <div class="chips-row" id="waitingList"></div>
+          </div>
+          <div class="queue">
+            <h4>running</h4>
+            <div class="chips-row" id="runningList"></div>
+          </div>
+          <div class="batch-box" id="batchInfo"></div>
+          <div class="metrics-grid" id="metricsGrid"></div>
+        </section>
+      </main>
+
+      <!-- 时间线 + 本步事件。 -->
+      <section class="lower">
+        <section class="panel">
+          <div class="panel-head">
+            <h3>时间线</h3>
+            <span class="muted">每行一个请求 · 每列一步</span>
+          </div>
+          <div id="timeline"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>本步事件</h3>
+            <span class="muted" id="eventCount"></span>
+          </div>
+          <ol class="event-list" id="eventList"></ol>
+          <div class="narration" id="narration"></div>
+        </section>
+      </section>
+
+      <!-- 两张图：KV 利用率、每步吞吐。 -->
+      <section class="panel charts-panel">
+        <div class="panel-head">
+          <h3>随步变化</h3>
+          <span class="muted">竖线 = 当前 step</span>
+        </div>
+        <div class="charts" id="charts"></div>
+      </section>
+
+      <footer>
+        <p>
+          所有数字来自仓库内的离散事件模拟器（<code>python -m sim.export</code>），
+          用来解释调度行为，<strong>不是 GPU 实测吞吐</strong>。真实引擎的 trace 导入在路线图里。
+        </p>
+        <p>
+          打开方式：在仓库根目录运行 <code>python -m http.server 8000</code>，
+          再访问 <code>http://localhost:8000</code>。直接双击 <code>index.html</code>
+          会因浏览器禁止 <code>file://</code> 读取 JSON 而失败。
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
