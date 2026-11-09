@@ -1,0 +1,17 @@
+# 只忽略本地生成物，不忽略源码
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 测试临时目录（test_export.py 用）
+tests/_tmp_export/
+
+# 前端本地服务/构建产物
+node_modules/
+dist/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
