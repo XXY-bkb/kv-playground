@@ -1,11 +1,29 @@
 # kv-playground — 把 LLM 推理的 KV cache 与连续批处理画出来
 
+[![tests](https://github.com/XXY-bkb/kv-playground/actions/workflows/tests.yml/badge.svg)](https://github.com/XXY-bkb/kv-playground/actions/workflows/tests.yml)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+
 > 一个**零依赖**的教学型可视化：用 Python 标准库写一个确定性的离散事件模拟器，
 > 把 paged KV cache、连续批处理、前缀缓存和显存不足时的抢占重算，
 > 导出成带版本号的 trace JSON，再由原生 JavaScript 在浏览器里逐步回放。
 
-**当前状态**：模拟器、单元测试、6 个场景的 trace 导出已完成；前端回放开发中。
+**当前状态**：模拟器、22 个 Python 单测、7 个前端纯函数测试、6 个场景的 trace 导出和零依赖前端回放都已完成；
+下一步是 GitHub Pages 部署与真实引擎 trace 导入。
 所有数字都是**模拟步数**，不是真实 GPU 的 wall-clock 性能。
+
+## 先看两张图
+
+![单请求场景：块表、调度队列、时间线与指标](docs/screenshot-single.png)
+
+![共享 system prompt：同一批前缀块被多条请求共享](docs/screenshot-shared-prefix.png)
+
+## 在线 demo
+
+GitHub Pages 部署后地址：<https://XXY-bkb.github.io/kv-playground/>（纯静态，无需后端）。
+
+本地看：在仓库根目录运行 `python -m http.server 8000`，打开 <http://localhost:8000/>。
+不要直接双击 `index.html`：浏览器会以 `file://` 打开，`fetch` 读不到 `data/scenarios/*.json`。
 
 ## 它能让你看到什么
 
@@ -26,13 +44,17 @@
 # 1. 重新生成 6 个场景的 trace（写入 data/scenarios/）
 python -m sim
 
-# 2. 跑测试（22 个用例，覆盖块管理、前缀缓存、调度、导出）
+# 2. 跑测试（Python 22 个 + 前端纯函数 7 个）
 python -m unittest discover -s tests -v
+node --test --test-isolation=none tests/js/util.test.mjs tests/js/narration.test.mjs
 
-# 3. 起一个静态服务器看前端（前端完成后）
+# 3. 起一个静态服务器看前端（无构建步骤，浏览器直接加载 ES module）
 python -m http.server 8000
 # 打开 http://localhost:8000/
 ```
+
+前端支持：场景切换、播放/暂停、上一步/下一步、重置、0.5×–3× 速度、
+空格键播放/暂停、左右方向键单步、鼠标悬停块查看引用计数与前缀哈希。
 
 ## 架构
 
@@ -46,8 +68,11 @@ sim/                      Python 标准库模拟器
   scenarios.py            6 个场景定义
   export.py               导出 trace JSON + index.json
 data/scenarios/           生成好的 trace（前端直接 fetch）
-web/                      原生 JS + Canvas/SVG 回放（开发中）
-tests/                    unittest：22 个用例
+index.html                页面骨架（单页，无构建）
+css/app.css               深色主题、三栏布局、响应式
+js/                       原生 ES module：回放控制、块池、时间线、图表、事件翻译
+tests/                    unittest（Python）+ node:test（前端纯函数）
+docs/screenshot-*.png     README 用的桌面截图
 docs/design.md            设计说明、不变量、已知限制
 ```
 
@@ -70,9 +95,9 @@ docs/design.md            设计说明、不变量、已知限制
                "metrics": { "kv_util": 0.0, "throughput": 0.0,
                             "prefix_hit_tokens": 0, "preemptions": 0,
                             "finished": 0 } } ],
-  "summary": { "total_steps": 36, "total_output_tokens": 128,
-               "peak_kv_util": 0.5, "preemptions": 0,
-               "prefix_hit_tokens": 256, "finished": 4, "total_requests": 4 }
+  "summary": { "total_steps": 37, "total_output_tokens": 128,
+               "peak_kv_util": 0.375, "preemptions": 0,
+               "prefix_hit_tokens": 384, "finished": 4, "total_requests": 4 }
 }
 ```
 
@@ -88,6 +113,17 @@ docs/design.md            设计说明、不变量、已知限制
 - **缓存驱逐优先于抢占**：前缀缓存里的块只是“可能有用”，不是正在计算的状态；
   块不够时先按 LRU 驱逐缓存，再考虑抢占 running 序列。
 - **确定性**：空闲池按 id 顺序取、哈希固定、JSON 排序输出；同一场景两次导出的字节完全一致。
+
+## 部署到 GitHub Pages
+
+这是纯静态站点，不需要构建：
+
+1. 把仓库推到 GitHub（public）；
+2. Settings → Pages → Build and deployment → Source 选 **Deploy from a branch**，
+   Branch 选 `main`、目录选 `/ (root)`；
+3. 等 1–2 分钟，访问 `https://<用户名>.github.io/kv-playground/`。
+
+首页、`css/`、`js/`、`data/` 都是相对路径，放在仓库根目录即可。
 
 ## 已知限制（不要在简历里夸大）
 
