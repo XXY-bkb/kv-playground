@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    name: Python 模拟器测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # 只依赖标准库，不需要 pip install。
+      - run: python -m unittest discover -s tests -v
+
+  frontend:
+    name: 前端纯函数测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # 用 --test-isolation=none 避免测试 runner 再 spawn 子进程；
+      # 本地 Windows 沙箱里 spawn 会 EPERM，这样本地和 CI 命令一致。
+      - run: node --test --test-isolation=none tests/js/util.test.mjs tests/js/narration.test.mjs

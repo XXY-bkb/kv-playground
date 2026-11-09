@@ -1,0 +1,10 @@
+{
+  "name": "kv-playground",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LLM 推理调度可视化：Python 标准库模拟器 + 零依赖原生 JS 回放。",
+  "scripts": {
+    "test": "node --test --test-isolation=none tests/js/util.test.mjs tests/js/narration.test.mjs"
+  }
+}
