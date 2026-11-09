@@ -42,7 +42,9 @@ def build_trace(scenario_id: str) -> dict[str, Any]:
 def _dump_json(path: Path, payload: dict[str, Any]) -> None:
     """统一的 JSON 写法：中文不转义、key 排序、缩进 2 格、末尾换行。"""
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
-    path.write_text(text + "\n", encoding="utf-8")
+    # 显式指定 newline="\n"：Windows 上 write_text 默认会把 \n 转成 \r\n，
+    # 而仓库统一用 LF；不写死会导致“导出后 git diff 一直有变化”。
+    path.write_text(text + "\n", encoding="utf-8", newline="\n")
 
 
 def export_all(out_dir: str | Path | None = None) -> list[Path]:
