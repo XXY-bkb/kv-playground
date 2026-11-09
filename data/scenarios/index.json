@@ -1,0 +1,107 @@
+{
+  "scenarios": [
+    {
+      "description": "一条 128 token 的 prompt、生成 32 个 token。观察 block table 如何随着 prefill/decode 一段段变长，以及请求结束后块如何回到空闲池。",
+      "file": "single.json",
+      "group": "基础",
+      "id": "single",
+      "summary": {
+        "finished": 1,
+        "generated_steps": 32,
+        "peak_kv_util": 0.1562,
+        "preemptions": 0,
+        "prefix_hit_tokens": 0,
+        "total_output_tokens": 32,
+        "total_requests": 1,
+        "total_steps": 33
+      },
+      "title": "单请求：先看懂块表"
+    },
+    {
+      "description": "6 条请求错峰到达，同时最多跑 3 条。对比单条串行，观察 decode 阶段如何被新到达的 prefill 填满，以及 waiting/running 队列怎么变化。",
+      "file": "concurrent.json",
+      "group": "并发",
+      "id": "concurrent",
+      "summary": {
+        "finished": 6,
+        "generated_steps": 184,
+        "peak_kv_util": 0.7969,
+        "preemptions": 0,
+        "prefix_hit_tokens": 0,
+        "total_output_tokens": 184,
+        "total_requests": 6,
+        "total_steps": 70
+      },
+      "title": "连续批处理：让 decode 槽位不空转"
+    },
+    {
+      "description": "同样的 6 条请求，把并发槽位限制为 1。总步数明显变长，但显存峰值更低——这就是“吞吐 vs 显存”的直观取舍。",
+      "file": "concurrent-static.json",
+      "group": "并发",
+      "id": "concurrent-static",
+      "summary": {
+        "finished": 6,
+        "generated_steps": 184,
+        "peak_kv_util": 0.75,
+        "preemptions": 0,
+        "prefix_hit_tokens": 0,
+        "total_output_tokens": 184,
+        "total_requests": 6,
+        "total_steps": 190
+      },
+      "title": "对照：一次只跑一条"
+    },
+    {
+      "description": "4 条请求的前 128 个 token 完全相同（模拟同一个 system prompt）。打开前缀缓存后，后面的请求会直接共享这些块，PREFIX_HIT 事件会标出命中了多少 token。",
+      "file": "shared-prefix.json",
+      "group": "前缀缓存",
+      "id": "shared-prefix",
+      "summary": {
+        "finished": 4,
+        "generated_steps": 128,
+        "peak_kv_util": 0.5,
+        "preemptions": 0,
+        "prefix_hit_tokens": 256,
+        "total_output_tokens": 128,
+        "total_requests": 4,
+        "total_steps": 36
+      },
+      "title": "共享 system prompt：前缀缓存命中"
+    },
+    {
+      "description": "同样的 4 条共享前缀请求，但每次 prefill 都重新分配块。对比命中 token、显存峰值和总步数，就能看出前缀缓存省了什么。",
+      "file": "shared-prefix-no-cache.json",
+      "group": "前缀缓存",
+      "id": "shared-prefix-no-cache",
+      "summary": {
+        "finished": 4,
+        "generated_steps": 128,
+        "peak_kv_util": 0.75,
+        "preemptions": 0,
+        "prefix_hit_tokens": 0,
+        "total_output_tokens": 128,
+        "total_requests": 4,
+        "total_steps": 36
+      },
+      "title": "对照：关掉前缀缓存"
+    },
+    {
+      "description": "总块数只有 24，4 条请求每条约 192 个 prompt token + 32 个输出 token。块不够时调度器会抢占一条 running 序列、释放它的块，让它之后从 0 重新 prefill；观察 PREEMPT 事件和重复的 prefill，以及最终输出仍然完整。",
+      "file": "oom.json",
+      "group": "显存不足",
+      "id": "oom",
+      "summary": {
+        "finished": 4,
+        "generated_steps": 131,
+        "peak_kv_util": 1.0,
+        "preemptions": 3,
+        "prefix_hit_tokens": 0,
+        "total_output_tokens": 128,
+        "total_requests": 4,
+        "total_steps": 132
+      },
+      "title": "显存不足：抢占与重算"
+    }
+  ],
+  "schema": "kv-playground/1"
+}
