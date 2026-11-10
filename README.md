@@ -44,7 +44,7 @@ GitHub Pages 部署后地址：<https://XXY-bkb.github.io/kv-playground/>（纯�
 # 1. 重新生成 6 个场景的 trace（写入 data/scenarios/）
 python -m sim
 
-# 2. 跑测试（Python 22 个 + 前端纯函数 7 个）
+# 2. 跑测试（Python 22 个 + 前端纯函数 7 个；前端测试需要 Node 24+）
 python -m unittest discover -s tests -v
 node --test --test-isolation=none tests/js/util.test.mjs tests/js/narration.test.mjs
 

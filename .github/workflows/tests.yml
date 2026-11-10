@@ -23,7 +23,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # 本地用 Node 24；`--test-isolation=none` 在 Node 22 上不存在，会以 exit 9 失败。
+          node-version: "24"
       # 用 --test-isolation=none 避免测试 runner 再 spawn 子进程；
       # 本地 Windows 沙箱里 spawn 会 EPERM，这样本地和 CI 命令一致。
       - run: node --test --test-isolation=none tests/js/util.test.mjs tests/js/narration.test.mjs
