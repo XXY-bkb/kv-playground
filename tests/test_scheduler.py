@@ -101,6 +101,23 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(seq_a.num_output_tokens, 8)
         self.assertEqual(seq_b.num_output_tokens, 8)
 
+    def test_finish_caches_prompt_before_free(self) -> None:
+        # output_len=1 的请求在 prefill 当步就完成；如果 _finish 先清空
+        # block_table，prompt 完整页就永远进不了前缀缓存。
+        sched = self._make_scheduler(num_blocks=4, budget=8, max_seqs=1)
+        seq = make_seq("a", prompt_len=4, output_len=1, base=0)
+        sched.add_request(seq)
+
+        sched.schedule()  # 接纳
+        batch, _ = sched.schedule()  # prefill 4 个 token，当步完成
+        sched.postprocess(batch, step=1)
+
+        self.assertTrue(seq.is_finished)
+        self.assertEqual(sched.bm.num_free, 3)
+        matched_blocks, matched_tokens = sched.cache.match(seq.token_ids)
+        self.assertEqual(matched_tokens, 4)
+        self.assertEqual(matched_blocks, [0])
+
 
 if __name__ == "__main__":
     unittest.main()

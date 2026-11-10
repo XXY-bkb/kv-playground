@@ -97,6 +97,19 @@ class PrefixCacheTest(unittest.TestCase):
         matched_blocks, matched_tokens = self.cache.match(tokens)
         self.assertEqual(matched_tokens, 0)
 
+    def test_evict_lru_can_skip_pinned_blocks(self) -> None:
+        tokens = list(range(8))
+        blocks = self._insert_tokens("a", tokens)
+
+        # 序列还持有这两个块（ref_count=2），只驱逐可回收块时应该返回 None。
+        self.assertIsNone(self.cache.evict_lru(evictable_only=True))
+        self.assertEqual(self.bm.num_free, 14)
+
+        # 序列结束后，块只剩缓存引用（ref_count=1），可以驱逐。
+        self.bm.free_seq("a")
+        self.assertEqual(self.cache.evict_lru(evictable_only=True), blocks[0])
+        self.assertEqual(self.bm.num_free, 15)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,8 +11,9 @@
 import json
 import unittest
 
+from sim.model import RequestSpec
 from sim.scenarios import get_scenario
-from sim.simulator import Simulator
+from sim.simulator import SimConfig, Simulator
 
 
 def run_scenario(scenario_id: str) -> dict:
@@ -102,6 +103,47 @@ class SimulatorTest(unittest.TestCase):
             # 3) 引用计数至少等于序列拥有者数量（缓存会额外加 1）
             for block in step["blocks"]["used"]:
                 self.assertGreaterEqual(block["ref"], len(block["owners"]))
+
+    def test_evicts_unpinned_cache_before_preempting(self) -> None:
+        # 6 个块：r1/r2 先跑完，prompt 块留在缓存里（只被缓存持有）；
+        # r3/r4 后到，块不够时应该先回收这些缓存块，而不是抢占 r4。
+        config = SimConfig(
+            page_size=4,
+            num_blocks=6,
+            max_num_seqs=4,
+            max_num_batched_tokens=512,
+            prefix_cache=True,
+        )
+        requests = [
+            RequestSpec("r1", 4, 3, 0),
+            RequestSpec("r2", 4, 3, 0),
+            RequestSpec("r3", 8, 8, 4),
+            RequestSpec("r4", 8, 8, 4),
+        ]
+        trace = Simulator(config, requests).run()
+
+        step6 = trace["steps"][6]
+        event_types = [event["type"] for event in step6["events"]]
+        self.assertIn("EVICT", event_types)
+        self.assertNotIn("PREEMPT", event_types)
+        self.assertEqual(step6["requests"]["r4"]["preemptions"], 0)
+
+    def test_single_token_output_still_enters_prefix_cache(self) -> None:
+        # output_len=1 的请求在 prefill 当步就结束；它的 prompt 块仍应
+        # 留在前缀缓存里，供后面的相同前缀请求命中。
+        config = SimConfig(
+            page_size=4,
+            num_blocks=8,
+            max_num_seqs=2,
+            max_num_batched_tokens=512,
+            prefix_cache=True,
+        )
+        requests = [
+            RequestSpec("r1", 4, 1, 0, shared_prefix_len=4),
+            RequestSpec("r2", 4, 1, 2, shared_prefix_len=4),
+        ]
+        trace = Simulator(config, requests).run()
+        self.assertEqual(trace["summary"]["prefix_hit_tokens"], 4)
 
 
 if __name__ == "__main__":

@@ -79,6 +79,15 @@ class BlockManagerTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.bm.validate()
 
+    def test_validate_detects_leaked_block(self) -> None:
+        self.bm.allocate("a", 1)
+        self.bm.free_seq("a")
+        # 人为把已经回到空闲池的块“弄丢”，模拟块泄漏：
+        # 块既不在空闲池，也没有任何引用，validate 必须报错。
+        self.bm.free_blocks.remove(0)
+        with self.assertRaises(AssertionError):
+            self.bm.validate()
+
 
 if __name__ == "__main__":
     unittest.main()
