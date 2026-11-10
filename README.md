@@ -3,13 +3,14 @@
 [![tests](https://github.com/XXY-bkb/kv-playground/actions/workflows/tests.yml/badge.svg)](https://github.com/XXY-bkb/kv-playground/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+[![demo](https://img.shields.io/badge/demo-online-brightgreen)](https://XXY-bkb.github.io/kv-playground/)
 
 > 一个**零依赖**的教学型可视化：用 Python 标准库写一个确定性的离散事件模拟器，
 > 把 paged KV cache、连续批处理、前缀缓存和显存不足时的抢占重算，
 > 导出成带版本号的 trace JSON，再由原生 JavaScript 在浏览器里逐步回放。
 
 **当前状态**：模拟器、22 个 Python 单测、7 个前端纯函数测试、6 个场景的 trace 导出和零依赖前端回放都已完成；
-下一步是 GitHub Pages 部署与真实引擎 trace 导入。
+GitHub Pages 已上线（见下方 demo），真实引擎 trace 导入是下一步。
 所有数字都是**模拟步数**，不是真实 GPU 的 wall-clock 性能。
 
 ## 先看两张图
@@ -20,7 +21,8 @@
 
 ## 在线 demo
 
-GitHub Pages 部署后地址：<https://XXY-bkb.github.io/kv-playground/>（纯静态，无需后端）。
+已上线：<https://XXY-bkb.github.io/kv-playground/>（纯静态，无需后端）。
+支持用 `?scenario=single|concurrent|shared-prefix|oom` 直接打开某个场景。
 
 本地看：在仓库根目录运行 `python -m http.server 8000`，打开 <http://localhost:8000/>。
 不要直接双击 `index.html`：浏览器会以 `file://` 打开，`fetch` 读不到 `data/scenarios/*.json`。
