@@ -9,7 +9,7 @@
 > 把 paged KV cache、连续批处理、前缀缓存和显存不足时的抢占重算，
 > 导出成带版本号的 trace JSON，再由原生 JavaScript 在浏览器里逐步回放。
 
-**当前状态**：模拟器、22 个 Python 单测、7 个前端纯函数测试、6 个场景的 trace 导出和零依赖前端回放都已完成；
+**当前状态**：模拟器、27 个 Python 单测、7 个前端纯函数测试、6 个场景的 trace 导出和零依赖前端回放都已完成；
 GitHub Pages 已上线（见下方 demo），真实引擎 trace 导入是下一步。
 **所有数字都来自仓库内的离散事件模拟器，没有任何 GPU 实测数据**：`total_steps` 是模拟步数，
 `throughput` 的单位是 token/步；token 数、前缀命中数和块占用是模拟器内的确定性计数，
@@ -48,7 +48,7 @@ GitHub Pages 已上线（见下方 demo），真实引擎 trace 导入是下一�
 # 1. 重新生成 6 个场景的 trace（写入 data/scenarios/）
 python -m sim
 
-# 2. 跑测试（Python 22 个 + 前端纯函数 7 个；前端测试需要 Node 24+）
+# 2. 跑测试（Python 27 个 + 前端纯函数 7 个；前端测试需要 Node 24+）
 python -m unittest discover -s tests -v
 node --test --test-isolation=none tests/js/util.test.mjs tests/js/narration.test.mjs
 
@@ -67,7 +67,7 @@ sim/                      Python 标准库模拟器
   model.py                请求、序列、块的数据结构
   block_manager.py        物理块池：分配 / 共享 / 引用计数 / 释放
   prefix_cache.py         前缀链哈希 + LRU 驱逐
-  scheduler.py            running 优先的调度、预算拆分、抢占、缓存驱逐
+  scheduler.py            running 优先的调度、预算拆分、缓存回收与抢占
   simulator.py            按步推进，生成事件与每步快照
   scenarios.py            6 个场景定义
   export.py               导出 trace JSON + index.json
@@ -114,9 +114,10 @@ docs/design.md            设计说明、不变量、已知限制
   让正在 decode 的请求反复被抢占，产生“抖动”。
 - **前缀链哈希**：只对单个块哈希会错误命中（前面 token 不同，KV 也不同）；
   这里把“前一块的哈希 + 当前块 token”一起哈希，并额外保存块内 token 做碰撞校验。
-- **块不够时，running 优先，但抢占和缓存驱逐都会发生**：调度器会抢占低优先级的 running
-  序列，也会按 LRU 清理前缀缓存；缓存块可能仍被 running 序列持有，所以驱逐不一定能立刻
-  腾出空闲块。具体顺序与代价见 `sim/scheduler.py` 的 `_ensure_blocks`。
+- **块不够时先回收缓存，再抢占 running**：调度器只驱逐没有被序列持有的缓存块
+  （`ref_count == 1`）；这种块驱逐后立刻回到空闲池。缓存块如果还被 running 持有，
+  驱逐也不会腾出块，所以不会被清掉。只有缓存里没有可回收块时，才抢占低优先级序列。
+  具体顺序见 `sim/scheduler.py` 的 `_ensure_blocks`。
 - **确定性**：空闲池按 id 顺序取、哈希固定、JSON 排序输出；同一场景两次导出的字节完全一致。
 
 ## 部署到 GitHub Pages
