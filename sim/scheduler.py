@@ -5,7 +5,7 @@
 1. prefill 优先：running 里还没算完 prompt 的序列先算；
 2. 连续批处理：每一步都重新组 batch，而不是等一整批一起结束；
 3. 预算限制：一步里 prefill 的 token 总数不能超过 max_num_batched_tokens；
-4. 显存不足时抢占：把优先级最低的 running 序列踢回 waiting，释放它的块。
+4. 显存不足时先回收未被序列持有的缓存块，再抢占 running 序列。
 
 执行顺序很重要：**先照顾 running，再接纳 waiting**。
 如果反过来，新请求可能把块占光，正在 decode 的序列拿不到新块，
@@ -220,8 +220,9 @@ class Scheduler:
         required = (seq.prompt_len + self.bm.page_size - 1) // self.bm.page_size
         need_new = required - len(matched_blocks)
         if not self.bm.can_allocate(need_new):
-            # 空闲池不够，但可能有大量块只是被前缀缓存“挂着引用”。
-            # 缓存块不是正在计算的状态，驱逐它比抢占 running 便宜，所以先尝试驱逐。
+            # 空闲池不够，但可能有块只是被前缀缓存“挂着引用”。
+            # 只驱逐没有被序列持有的缓存块；被 running 持有的块驱逐了也不会
+            # 立刻空闲，别为了接纳新请求去破坏正在跑的计算。
             if not self._evict_cache(need_new, events):
                 return False
 
@@ -279,7 +280,11 @@ class Scheduler:
         batch: Batch,
         events: list[dict],
     ) -> bool:
-        """保证序列算到 target_tokens 时有足够的块；不够就尝试抢占并重试。"""
+        """保证序列算到 target_tokens 时有足够的块。
+
+        不够时先驱逐“只被缓存持有”的块，再抢占 running 序列；
+        抢占后 victim 的块可能还挂在缓存上，所以还要再驱逐一次。
+        """
         needed_pages = (target_tokens + self.bm.page_size - 1) // self.bm.page_size
         need_new = needed_pages - len(seq.block_table)
         if need_new <= 0:
@@ -297,51 +302,64 @@ class Scheduler:
             )
             return True
 
-        # 块不够：挑一个“不在本 batch 里”的 running 序列抢占，
-        # 避免把正在执行的 batch 弄坏。抢完立刻重试一次分配；
-        # 如果还是不够，就本步跳过这条序列。
+        # 先回收“只被缓存持有”的块：它们没有序列在用，驱逐后立刻回到
+        # 空闲池，代价只是以后少一次前缀命中。
+        if self._evict_cache(need_new, events):
+            self._allocate_new_blocks(seq, need_new, events)
+            return True
+
+        # 缓存里没有可回收的块，再挑一个“不在本 batch 里”的 running
+        # 序列抢占，避免把正在执行的 batch 弄坏。
         in_batch = {s.id for s in batch.seqs}
         victim = self._pick_victim(exclude=in_batch | {seq.id})
         if victim is not None:
             self._preempt(victim, events)
 
-        # 抢占只是把“序列的引用”还回去；如果这个块同时被前缀缓存引用，
-        # 块还不会回到空闲池。所以抢完还要再尝试驱逐缓存，然后再试一次分配。
-        if not self.bm.can_allocate(need_new):
-            self._evict_cache(need_new, events)
-
-        if self.bm.can_allocate(need_new):
-            new_blocks = self.bm.allocate(seq.id, need_new)
-            events.append(
-                {
-                    "type": "ALLOC",
-                    "seq": seq.id,
-                    "blocks": list(new_blocks),
-                    "count": len(new_blocks),
-                }
-            )
-            return True
+            # 抢占只是把“序列的引用”还回去；如果 victim 的块同时被前缀
+            # 缓存引用，块还不会回到空闲池。所以抢完再驱逐一次缓存，
+            # 否则会出现“抢了还是不够、白丢进度”的情况。
+            if self._evict_cache(need_new, events):
+                self._allocate_new_blocks(seq, need_new, events)
+                return True
 
         return False
 
+    def _allocate_new_blocks(
+        self, seq: Sequence, count: int, events: list[dict]
+    ) -> None:
+        """给序列分配 count 个新块，并记录 ALLOC 事件。"""
+        new_blocks = self.bm.allocate(seq.id, count)
+        events.append(
+            {
+                "type": "ALLOC",
+                "seq": seq.id,
+                "blocks": list(new_blocks),
+                "count": len(new_blocks),
+            }
+        )
+
     def _evict_cache(self, needed: int, events: list[dict]) -> bool:
-        """从 LRU 头部驱逐前缀缓存块，直到能腾出 needed 个块。
+        """从 LRU 头部驱逐“只被缓存持有”的块，直到能腾出 needed 个块。
+
+        只驱逐 ref_count == 1 的缓存块：它们没有序列在用，驱逐后立刻回到
+        空闲池。被 running 序列持有的缓存块即使被驱逐也不会产生空闲块，
+        所以直接跳过，避免“清了缓存却还是不够”的无用功。
 
         返回 True 表示现在 can_allocate(needed) 成立。
-        注意：一个块可能同时被 running 序列持有，这时驱逐只减缓存引用，
-        不会立刻变成空闲块；所以循环有上限，避免实现出错时死循环。
         """
         if not self.use_prefix_cache:
             return self.bm.can_allocate(needed)
 
-        # 最多尝试 2 倍总块数：正常情况下不会超过这个数
-        for _ in range(self.bm.num_blocks * 2):
-            if self.bm.can_allocate(needed):
-                return True
-            block_id = self.cache.evict_lru()
+        while not self.bm.can_allocate(needed):
+            free_before = self.bm.num_free
+            block_id = self.cache.evict_lru(evictable_only=True)
             if block_id is None:
                 break
             events.append({"type": "EVICT", "block": block_id})
+            # 防御性检查：evictable_only 正常一定会释放块；
+            # 如果没释放，继续循环只会刷事件，直接停。
+            if self.bm.num_free == free_before:
+                break
 
         return self.bm.can_allocate(needed)
 
@@ -382,8 +400,31 @@ class Scheduler:
             }
         )
 
+    def _cache_prompt_blocks(self, seq: Sequence) -> None:
+        """把序列已算完的 prompt 完整页登记进前缀缓存。
+
+        正常路径由 Simulator 每步统一登记；这里额外兜底，覆盖
+        “prefill 当步就完成（output_len=1）”的情况——否则 _finish()
+        会先清空 block_table，prompt 块就再也没机会进缓存了。
+        """
+        if not self.use_prefix_cache:
+            return
+
+        prompt_computed = min(seq.num_computed_tokens, seq.prompt_len)
+        full_pages = prompt_computed // self.bm.page_size
+        if full_pages <= 0 or len(seq.block_table) < full_pages:
+            return
+
+        self.cache.insert(
+            seq.token_ids[: full_pages * self.bm.page_size],
+            seq.block_table[:full_pages],
+        )
+
     def _finish(self, seq: Sequence, step: int, events: list[dict]) -> None:
         """序列生成完毕：释放块、标记完成、移出 running。"""
+        # 先登记 prompt 完整页，再释放块；正常情况下这些页已经由
+        # Simulator 登记过，insert() 会按哈希跳过，不会重复占引用。
+        self._cache_prompt_blocks(seq)
         freed = self.bm.free_seq(seq.id)
         seq.status = SeqStatus.FINISHED
         seq.finish_step = step

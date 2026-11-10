@@ -4,7 +4,9 @@
 1. 空闲池里的块，ref_count 一定是 0；
 2. 一个块要么在空闲池，要么至少被一个序列/缓存引用；
 3. 序列释放块时只减引用计数，计数归零才真正回到空闲池；
-4. 共享块（前缀命中）只增加引用计数，不复制数据。
+4. 同一个块不会在同一个序列的块表里出现两次。
+
+共享块（前缀命中）只增加引用计数，不复制数据。
 """
 
 from __future__ import annotations
@@ -163,14 +165,21 @@ class BlockManager:
     # 自检：测试和导出前都可以调用，尽早发现不变量被破坏
     # ------------------------------------------------------------------
     def validate(self) -> None:
+        """检查空闲池、引用计数和块表是否自洽。"""
         if len(set(self.free_blocks)) != len(self.free_blocks):
             raise AssertionError("空闲池里出现重复块")
-        if len(self.free_blocks) + self.num_used != self.num_blocks:
-            raise AssertionError("空闲块数 + 已用块数 != 总块数")
 
         for block_id in self.free_blocks:
             if self.blocks[block_id].ref_count != 0:
                 raise AssertionError(f"空闲块 {block_id} 的 ref_count 不为 0")
+
+        # 不变量 2：不在空闲池的块必须有人引用，否则就是块泄漏。
+        free_set = set(self.free_blocks)
+        for block in self.blocks:
+            if block.id not in free_set and block.ref_count == 0:
+                raise AssertionError(
+                    f"块 {block.id} 既不在空闲池，也没有任何引用"
+                )
 
         for seq_id, block_ids in self.seq_blocks.items():
             if len(set(block_ids)) != len(block_ids):

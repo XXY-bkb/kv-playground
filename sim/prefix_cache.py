@@ -118,15 +118,18 @@ class PrefixCache:
     # ------------------------------------------------------------------
     # 驱逐
     # ------------------------------------------------------------------
-    def evict_lru(self) -> int | None:
+    def evict_lru(self, *, evictable_only: bool = False) -> int | None:
         """驱逐最久未用的缓存块；没有可驱逐的返回 None。
 
-        注意：如果这个块还被某个序列持有，它不会被放回空闲池，
-        只是“不再作为缓存被别人命中”，序列仍能正常使用。
+        evictable_only=True 时只驱逐没有被序列持有的块（ref_count == 1）；
+        这种块驱逐后立刻回到空闲池。仍被 running 序列持有的块会留在 LRU
+        里，因为驱逐它只会减少缓存引用，腾不出空闲块。
         """
-        while self.lru:
-            block_id, _ = self.lru.popitem(last=False)
+        for block_id in list(self.lru):
             block = self.bm.blocks[block_id]
+            if evictable_only and block.ref_count > 1:
+                continue
+            del self.lru[block_id]
             old_hash = block.hash
             if old_hash is not None:
                 self.hash_to_block.pop(old_hash, None)
